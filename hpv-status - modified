@@ -1,0 +1,103 @@
+function onEdit(e) {
+  if (!e) return;
+
+  const ss = e.source;
+  const editedSheet = ss.getActiveSheet();
+  const editedRange = e.range;
+
+  const dataSheetName = "DATA";
+  const rawSheetName = "RAW";
+  const idCol = 1;        // Column A
+  const dobCol = 3;       // Column C
+  const outputCol = 7;    // Column G (Vaccination Status)
+
+  // === If edited sheet is "DATA", update only that row ===
+  if (editedSheet.getName() === dataSheetName && editedRange.getRow() >= 2) {
+    const row = editedRange.getRow();
+    const dataSheet = ss.getSheetByName(dataSheetName);
+    updateRowStatus(dataSheet, row, idCol, dobCol, outputCol, rawSheetName, ss);
+    return;
+  }
+
+  // === If edited sheet is "RAW", and column N (Vaccination Status) is changed ===
+  if (editedSheet.getName() === rawSheetName && editedRange.getColumn() === 14) {
+    updateAllVaccinationStatus();
+  }
+}
+
+// === Recalculate all rows in DATA sheet ===
+function updateAllVaccinationStatus() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const dataSheet = ss.getSheetByName("DATA");
+  const rawSheetName = "RAW";
+
+  const idCol = 1;
+  const dobCol = 3;
+  const outputCol = 7;
+
+  const lastRow = dataSheet.getLastRow();
+  for (let row = 2; row <= lastRow; row++) {
+    updateRowStatus(dataSheet, row, idCol, dobCol, outputCol, rawSheetName, ss);
+  }
+}
+
+// === Update a single row in DATA sheet ===
+function updateRowStatus(sheet, row, idCol, dobCol, outputCol, rawSheetName, ss) {
+  const id = sheet.getRange(row, idCol).getValue();
+  const dobRaw = sheet.getRange(row, dobCol).getValue();
+
+  if (!id || !dobRaw) {
+    sheet.getRange(row, outputCol).setValue("");
+    return;
+  }
+
+  // Parse DOB (supports both Date and DD/MM/YYYY format)
+  const dob = parseDate(dobRaw);
+  if (!dob || isNaN(dob.getTime())) {
+    sheet.getRange(row, outputCol).setValue("");
+    return;
+  }
+
+  const ageInfo = calculateAge(dob);
+  const isUnder10 = ageInfo.years < 10;
+  const isBetween10And10Half = (ageInfo.years === 10 && ageInfo.months < 6);
+
+  const rawSheet = ss.getSheetByName(rawSheetName);
+  const rawData = rawSheet.getRange("C2:N" + rawSheet.getLastRow()).getValues(); // C:N → Index 0–11
+  const match = rawData.find(rowData => rowData[0] === id); // Match by ID in RAW column C
+
+  let status = "";
+
+  if (isUnder10) {
+    status = "Not eligible";
+  } else if (isBetween10And10Half) {
+    status = match ? (match[11] ? "Vaccinated" : "Pending Vaccination") : "Pending Vaccination";
+  } else {
+    status = match ? (match[11] ? "Vaccinated" : "Pending Vaccination") : "No Records Found";
+  }
+
+  sheet.getRange(row, outputCol).setValue(status);
+}
+
+// === Parse DOB: support DD/MM/YYYY string or Date object ===
+function parseDate(value) {
+  if (value instanceof Date) return value;
+  const parts = value.toString().split("/");
+  if (parts.length !== 3) return null;
+  const [dd, mm, yyyy] = parts.map(Number);
+  return new Date(yyyy, mm - 1, dd);
+}
+
+// === Calculate age in years and months ===
+function calculateAge(dob) {
+  const today = new Date();
+  let years = today.getFullYear() - dob.getFullYear();
+  let months = today.getMonth() - dob.getMonth();
+
+  if (months < 0 || (months === 0 && today.getDate() < dob.getDate())) {
+    years--;
+    months += 12;
+  }
+
+  return { years, months };
+}
